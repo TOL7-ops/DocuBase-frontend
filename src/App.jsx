@@ -345,7 +345,12 @@ export default function App() {
                   <div className="sb-doc-icon"><I.Doc /></div>
                   <div className="sb-doc-info">
                     <div className="sb-doc-name">{d.title}</div>
-                    <div className="sb-doc-meta">{d.chunk_count} chunk{d.chunk_count !== 1 ? 's' : ''}</div>
+                    <div className="sb-doc-meta">
+                      {d.chunk_count} chunk{d.chunk_count !== 1 ? 's' : ''}
+                      <span className="sb-doc-id" title={d.document_id}>
+                        #{d.document_id.slice(0, 6)}
+                      </span>
+                    </div>
                   </div>
                 </div>
               ))

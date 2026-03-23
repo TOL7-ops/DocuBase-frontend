@@ -372,12 +372,6 @@ button { cursor: pointer; font-family: var(--font); }
   transition: border-color 0.15s, box-shadow 0.15s, color 0.15s, transform 0.1s;
   box-shadow: var(--shadow-sm);
 }
-
-.topbar-left {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
 .starter-card:hover {
   border-color: var(--accent-lt);
   box-shadow: var(--shadow);
@@ -716,4 +710,49 @@ button { cursor: pointer; font-family: var(--font); }
     text-overflow: ellipsis;
     max-width: 160px;
   }
+}
+
+/* ── iOS Safe Area (notch + home bar) ─────────────────────────────────────── */
+.shell {
+  /* Extend into safe areas */
+  padding-top:    env(safe-area-inset-top);
+  padding-bottom: env(safe-area-inset-bottom);
+  padding-left:   env(safe-area-inset-left);
+  padding-right:  env(safe-area-inset-right);
+}
+
+.input-area {
+  /* Extra padding above iPhone home bar */
+  padding-bottom: calc(16px + env(safe-area-inset-bottom));
+}
+
+/* Prevent iOS Safari bounce scroll on the outer shell */
+body {
+  overscroll-behavior: none;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Fix iOS Safari 100vh bug — use dvh (dynamic viewport height) */
+.shell {
+  height: 100dvh;
+}
+
+@supports not (height: 100dvh) {
+  /* Fallback for older iOS */
+  .shell { height: -webkit-fill-available; }
+}
+
+/* Document ID badge in sidebar */
+.sb-doc-id {
+  display: inline-block;
+  margin-left: 6px;
+  font-size: 9px;
+  font-family: monospace;
+  color: var(--text3);
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  padding: 1px 5px;
+  border-radius: 4px;
+  letter-spacing: 0.02em;
+  vertical-align: middle;
 }

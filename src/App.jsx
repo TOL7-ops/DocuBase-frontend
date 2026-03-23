@@ -30,62 +30,43 @@ const store = {
   setActive: id => { try { if (id) localStorage.setItem(ACTIVE_KEY, id); else localStorage.removeItem(ACTIVE_KEY); } catch {} },
 };
 
-/* ─── PDF extraction ──────────────────────────────────────────────────────── */
+/* ─── File reading ────────────────────────────────────────────────────────── */
 
 function isPdf(file) {
-  // iOS Safari often reports PDFs as application/octet-stream — check extension too
   return (
     file.type === 'application/pdf' ||
-    file.type === 'application/octet-stream' && file.name.toLowerCase().endsWith('.pdf') ||
+    (file.type === 'application/octet-stream' && file.name.toLowerCase().endsWith('.pdf')) ||
     file.name.toLowerCase().endsWith('.pdf')
   );
 }
 
-async function extractPdfText(file) {
-  // Safari-safe: use CDN worker instead of new URL() which breaks on iOS
-  const pdfjsLib = await import('pdfjs-dist');
+// For PDFs: read as base64 and let the backend extract text via pdf-parse.
+// This avoids ALL browser-side PDF parsing — no pdfjs, no worker, no iOS issues.
+function readFileAsBase64(file) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload  = e => resolve(e.target.result); // returns "data:application/pdf;base64,..."
+    r.onerror = () => reject(new Error('Failed to read file'));
+    r.readAsDataURL(file);
+  });
+}
 
-  // Use a CDN-hosted worker — avoids iOS Safari's dynamic import restrictions
-  pdfjsLib.GlobalWorkerOptions.workerSrc =
-    'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.0.379/pdf.worker.min.mjs';
-
-  const arrayBuffer = await file.arrayBuffer();
-  const pdf         = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
-  const pages       = [];
-
-  for (let i = 1; i <= pdf.numPages; i++) {
-    const page = await pdf.getPage(i);
-    const ct   = await page.getTextContent();
-    pages.push(ct.items.map(item => item.str).join(' '));
-  }
-
-  const text = pages.join('\n\n').trim();
-  if (!text) throw new Error('PDF has no readable text (may be a scanned image)');
-  return text;
+// For text files: read as plain text
+function readFileAsText(file) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload  = e => resolve(e.target.result || '');
+    r.onerror = () => reject(new Error('Failed to read file'));
+    r.readAsText(file);
+  });
 }
 
 async function readFile(file) {
   if (isPdf(file)) {
-    try {
-      return await extractPdfText(file);
-    } catch (err) {
-      // Fallback: send filename as content so upload doesn't fully fail
-      console.warn('PDF extraction failed, using fallback:', err.message);
-      throw new Error(`PDF extraction failed: ${err.message}. Try a text file instead.`);
-    }
+    // Send base64 to backend — backend uses pdf-parse to extract text
+    return readFileAsBase64(file);
   }
-
-  // Text files — wrap in try/catch for iOS safety
-  return new Promise((resolve, reject) => {
-    const r = new FileReader();
-    r.onload  = e => {
-      const result = e.target?.result;
-      if (!result && result !== '') { reject(new Error('File read returned empty result')); return; }
-      resolve(result);
-    };
-    r.onerror = () => reject(new Error('Failed to read file — check file permissions on device'));
-    r.readAsText(file);
-  });
+  return readFileAsText(file);
 }
 
 function fmtSize(b) { return b < 1024 ? `${b}B` : b < 1048576 ? `${(b/1024).toFixed(1)}KB` : `${(b/1048576).toFixed(1)}MB`; }

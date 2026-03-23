@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DocuBase File Debug</title>
+<style>
+  body { font-family: -apple-system, sans-serif; padding: 20px; background: #f5f5f5; }
+  h1 { font-size: 18px; margin-bottom: 4px; }
+  p  { font-size: 13px; color: #666; margin-bottom: 16px; }
+  input[type=file] { display: block; width: 100%; padding: 12px; background: white;
+    border: 2px dashed #ccc; border-radius: 10px; font-size: 14px; margin-bottom: 16px; }
+  .log { background: #1a1a1a; color: #e2e2e2; border-radius: 10px; padding: 14px;
+    font-family: monospace; font-size: 12px; line-height: 1.7; min-height: 200px;
+    white-space: pre-wrap; word-break: break-all; }
+  .ok   { color: #4ade80; }
+  .err  { color: #f87171; }
+  .info { color: #93c5fd; }
+  .warn { color: #fbbf24; }
+  button { background: #2563eb; color: white; border: none; border-radius: 8px;
+    padding: 10px 20px; font-size: 14px; margin-bottom: 12px; width: 100%; }
+</style>
+</head>
+<body>
+
+<h1>🔍 DocuBase File Debug</h1>
+<p>Open this page on your iPhone, pick any file, and share the log output.</p>
+
+<input type="file" id="picker" accept=".pdf,.txt,.md,.csv,*/*" multiple />
+<button onclick="testApi()">Also test backend /health</button>
+<div class="log" id="log">Waiting for file selection…</div>
+
+<script>
+const log  = document.getElementById('log');
+const API  = 'https://docubase-ai.onrender.com'; // ← update if your URL is different
+
+function write(msg, cls = '') {
+  const line = document.createElement('div');
+  line.className = cls;
+  line.textContent = msg;
+  log.appendChild(line);
+  log.scrollTop = log.scrollHeight;
+}
+
+function clear() { log.innerHTML = ''; }
+
+// ── File picker ──────────────────────────────────────────────────────────────
+document.getElementById('picker').addEventListener('change', async (e) => {
+  clear();
+  const files = Array.from(e.target.files);
+  write(`Selected ${files.length} file(s)\n`, 'info');
+
+  for (const file of files) {
+    write(`── File: ${file.name}`, 'info');
+    write(`   type: "${file.type}"`);
+    write(`   size: ${file.size} bytes (${(file.size/1024).toFixed(1)} KB)`);
+    write(`   lastModified: ${new Date(file.lastModified).toISOString()}`);
+
+    const isPdf = file.name.toLowerCase().endsWith('.pdf') ||
+                  file.type === 'application/pdf' ||
+                  file.type === 'application/octet-stream';
+
+    write(`   isPdf: ${isPdf}`, isPdf ? 'warn' : '');
+
+    // Test 1: arrayBuffer
+    write(`\n[1] Testing file.arrayBuffer()…`);
+    try {
+      const buf = await file.arrayBuffer();
+      write(`   ✓ arrayBuffer OK — ${buf.byteLength} bytes`, 'ok');
+
+      // Show first 8 bytes (PDF magic bytes: %PDF)
+      const bytes = new Uint8Array(buf.slice(0, 8));
+      const hex   = Array.from(bytes).map(b => b.toString(16).padStart(2,'0')).join(' ');
+      const ascii = Array.from(bytes).map(b => b >= 32 && b < 127 ? String.fromCharCode(b) : '.').join('');
+      write(`   First bytes: ${hex}  →  "${ascii}"`);
+      if (ascii.startsWith('%PDF')) write(`   ✓ Valid PDF magic bytes`, 'ok');
+      else if (isPdf) write(`   ⚠ File named .pdf but no PDF header — may be corrupted`, 'warn');
+    } catch (err) {
+      write(`   ✗ arrayBuffer FAILED: ${err.message}`, 'err');
+    }
+
+    // Test 2: FileReader readAsText
+    write(`\n[2] Testing FileReader.readAsText()…`);
+    try {
+      const text = await new Promise((resolve, reject) => {
+        const r = new FileReader();
+        r.onload  = e => resolve(e.target.result);
+        r.onerror = () => reject(new Error(r.error?.message || 'FileReader error'));
+        r.readAsText(file);
+      });
+      write(`   ✓ readAsText OK — ${text.length} chars`, 'ok');
+      write(`   Preview: "${text.slice(0, 100).replace(/\n/g, '↵')}"`);
+    } catch (err) {
+      write(`   ✗ readAsText FAILED: ${err.message}`, 'err');
+    }
+
+    // Test 3: pdfjs (only for PDFs)
+    if (isPdf) {
+      write(`\n[3] Testing pdfjs-dist extraction…`);
+      try {
+        // Try to import pdfjs
+        write(`   Loading pdfjs-dist via dynamic import…`);
+        const pdfjsLib = await import('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.0.379/pdf.min.mjs');
+        write(`   ✓ pdfjs imported`, 'ok');
+
+        pdfjsLib.GlobalWorkerOptions.workerSrc =
+          'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.0.379/pdf.worker.min.mjs';
+        write(`   ✓ Worker URL set`, 'ok');
+
+        const buf = await file.arrayBuffer();
+        write(`   Loading PDF document…`);
+        const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
+        write(`   ✓ PDF loaded — ${pdf.numPages} page(s)`, 'ok');
+
+        let fullText = '';
+        for (let i = 1; i <= pdf.numPages; i++) {
+          const page = await pdf.getPage(i);
+          const ct   = await page.getTextContent();
+          fullText += ct.items.map(item => item.str).join(' ') + '\n';
+        }
+
+        if (fullText.trim()) {
+          write(`   ✓ Text extracted — ${fullText.trim().length} chars`, 'ok');
+          write(`   Preview: "${fullText.trim().slice(0, 150).replace(/\n/g, '↵')}"`);
+        } else {
+          write(`   ⚠ PDF loaded but NO text found — likely a scanned/image PDF`, 'warn');
+        }
+      } catch (err) {
+        write(`   ✗ pdfjs FAILED: ${err.message}`, 'err');
+        write(`   Stack: ${err.stack?.split('\n').slice(0,3).join(' | ')}`, 'err');
+      }
+    }
+
+    write(`\n── Done with ${file.name}\n`);
+  }
+});
+
+// ── Backend health test ──────────────────────────────────────────────────────
+async function testApi() {
+  clear();
+  write(`Testing backend connectivity…\n`, 'info');
+
+  // 1. Basic fetch
+  write(`[1] GET ${API}/health`);
+  try {
+    const res  = await fetch(`${API}/health`);
+    const data = await res.json();
+    write(`   ✓ Status: ${res.status}`, 'ok');
+    write(`   Body: ${JSON.stringify(data)}`);
+  } catch (err) {
+    write(`   ✗ FAILED: ${err.message}`, 'err');
+    write(`   This means CORS is blocking or backend is down`, 'warn');
+  }
+
+  // 2. CORS preflight
+  write(`\n[2] POST preflight check`);
+  try {
+    const res = await fetch(`${API}/ask`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ question: 'ping' }),
+    });
+    const data = await res.json();
+    write(`   ✓ POST reached backend — status ${res.status}`, 'ok');
+    write(`   Body: ${JSON.stringify(data).slice(0, 100)}`);
+  } catch (err) {
+    write(`   ✗ POST FAILED: ${err.message}`, 'err');
+  }
+
+  // 3. Browser info
+  write(`\n[3] Browser info`);
+  write(`   userAgent: ${navigator.userAgent}`);
+  write(`   platform: ${navigator.platform}`);
+  write(`   online: ${navigator.onLine}`);
+}
+</script>
+</body>
+</html>
